@@ -1,3 +1,9 @@
+const statusMap = {
+  PENDING: 'PENDING',
+  FULFILLED: 'FULFILLED',
+  REJECTED: 'REJECTED'
+}
+
 function isFunction (fn) {
   return Object.prototype.toString.call(fn).toLocaleLowerCase() === '[object function]';
 }
@@ -7,7 +13,11 @@ function isObject (obj) {
 }
 
 function isPromise (p) {
-  return p instanceof My_Promise;
+  return p instanceof Promise;
+}
+
+function runCbs (cbs, value) {
+  cbs.forEach(cb => cb(value));
 }
 
 function fulfilledPromise (promise, value) {
@@ -17,11 +27,22 @@ function fulfilledPromise (promise, value) {
 
   promise.status = statusMap.FULFILLED;
   promise.value = value;
-
-  runCbs(promise.resolveCbs, value);
+  // 2.2.6.1
+  runCbs(promise.fulfilledCbs, value);
 }
 
-// 2.3
+function rejectedPromise (promise, reason) {
+  if (promise.status !== statusMap.PENDING) {
+    return;
+  }
+
+  promise.status = statusMap.REJECTED;
+  promise.reason = reason;
+  // 2.2.6.2
+  runCbs(promise.rejectedCbs, reason);
+}
+
+// 2.3 promise 解析过程
 function resolvePromise (promise, x) {
   // 2.3.1
   if (promise === x) {
@@ -33,28 +54,24 @@ function resolvePromise (promise, x) {
     // 2.3.2.1
     if (x.status === statusMap.PENDING) {
       x.then(
-        () => {
-          fulfilledPromise(promise, x.value);
-        },
-        () => {
-          rejectedPromise(promise, x.reason);
-        }
+        () => fulfilledPromise(promise, x.value),
+        () => rejectedPromise(promise, x.reason)
       );
       return;
     }
     // 2.3.2.2
     if (x.status === statusMap.FULFILLED) {
-      fulfilledPromise(promsie, x.value);
-      return;
+      fulfilledPromise(promise, x.value);
+      return;  
     }
     // 2.3.2.3
     if (x.status === statusMap.REJECTED) {
       rejectedPromise(promise, x.reason);
       return;
     }
+
     return;
   }
-
   // 2.3.3
   if (isObject(x) || isFunction(x)) {
     let then;
@@ -62,46 +79,45 @@ function resolvePromise (promise, x) {
     try {
       // 2.3.3.1
       then = x.then;
-    } catch (error) {
+    } catch (err) {
       // 2.3.3.2
-      rejectedPromise(promise, error);
+      rejectedPromise(promise, err);
       return;
     }
-    // 2.3.3.3
     if (isFunction(then)) {
       try {
+        // 2.3.3.3
         then.call(
           x,
-          // 2.3.3.3.1
           y => {
             // 2.3.3.3.3
             if (called) {
               return;
             }
+  
             called = true;
-            resolvePromise(promise, y);
+            // 2.3.3.3.1
+            resolvePromise(promise, y)
           },
-          // 2.3.3.3.2
           r => {
             // 2.3.3.3.3
             if (called) {
               return;
             }
+  
             called = true;
-            rejectedPromise(promise, r);
+            // 2.3.3.3.2
+            rejectedPromise(promise, r)
           }
-        )
-      } catch (error) {
-        // 2.3.3.3.4
+        );
+      } catch (err) {
         if (called) {
-          // 2.3.3.3.4.1
           return;
         }
+
         called = true;
-        // 2.3.3.3.4.2
-        rejectedPromise(promise, error);
+        rejectedPromise(promise, err);
       }
-      return;
     } else {
       // 2.3.3.4
       fulfilledPromise(promise, x);
@@ -114,137 +130,107 @@ function resolvePromise (promise, x) {
   }
 }
 
-function rejectedPromise (promise, reason) {
-  // 2.1.3
-  if (promise.status !== statusMap.PENDING) {
-    return;
-  }
-  // 2.1.3.1
-  promise.status = statusMap.REJECTED;
-  // 2.1.3.2
-  promise.reason = reason;
-
-  runCbs(promise.rejectedCbs, reason);
-}
-
-function runCbs (cbs, value) {
-  cbs.forEach(cb => cb(value));
-}
-
-const statusMap = {
-  PENDING: 'PENDING',
-  FULFILLED: 'FULFILLED',
-  REJECTED: 'REJECTED'
-}
-class My_Promise {
+// 1.1
+class Promise {
   constructor (fn) {
-    // 2.1
     this.status = statusMap.PENDING;
-    //1.3
+    // 1.3
     this.value = undefined;
     // 1.5
     this.reason = undefined;
-
-    this.resolveCbs = [];
-    this.rejectedCbs = [];
-    fn (
+    this.fulfilledCbs = []; // then callback resolve
+    this.rejectedCbs = []; // then callback reject
+    fn(
       value => resolvePromise(this, value),
       reason => rejectedPromise(this, reason)
     );
   }
-  // 1.2
+  // 2.2
   then (onFulfilled, onRejected) {
     const promise1 = this, promise2 = new Promise(() => {});
-    // 2.2
+
     if (promise1.status === statusMap.FULFILLED) {
-      // 2.2.1
+      // 2.2.1.1
       if (!isFunction(onFulfilled)) {
-        // 2.2.1.1
         return promise1;
       }
       // 2.2.2
-      // 2.2.2.1
       setTimeout(() => {
         try {
           // 2.2.2.1
-          // 2.2.7.1
           const x = onFulfilled(promise1.value);
           resolvePromise(promise2, x);
         } catch (err) {
-          // 2.2.7.2
           rejectedPromise(promise2, err);
         }
       }, 0);
     }
 
     if (promise1.status === statusMap.REJECTED) {
-      // 2.2.1
+      // 2.2.1.2
       if (!isFunction(onRejected)) {
-        // 2.2.1.2
         return promise1;
       }
       // 2.2.3
       setTimeout(() => {
-        // 2.2.3.1
         try {
-          // 2.2.7.1
+          // 2.2.3.1
           const x = onRejected(promise1.reason);
-          rejectedPromise(promise2, x);
+          resolvePromise(promise2, x);
         } catch (err) {
-          // 2.2.7.2
           rejectedPromise(promise2, err);
         }
-      }, 0);
+      });
     }
+    // 2.2.4
     if (promise1.status === statusMap.PENDING) {
+      // 2.2.5
       // 2.2.7.3
-      onFulfilled = isFunction(onFulfilled) ? onFulfilled : value => {
-        return value;
-      }
-
+      onFulfilled = isFunction(onFulfilled) ? onFulfilled : value => value;
       // 2.2.7.4
-      onRejected = isFunction(onRejected) ? onRejected : reason => {
-        throw reason;
-      }
-
+      onRejected = isFunction(onRejected) ? onRejected : reason => { throw reason };
       // 2.2.6
-      promise1.resolveCbs.push(() => {
+      // 2.2.6.1
+      promise1.fulfilledCbs.push(() => {
         setTimeout(() => {
           try {
-            // 2.2.6.1
+            // 2.2.7.1
             const x = onFulfilled(promise1.value);
             resolvePromise(promise2, x);
           } catch (err) {
+            // 2.2.7.2
             rejectedPromise(promise2, err);
           }
         }, 0);
       });
-
+      // 2.2.6.2
       promise1.rejectedCbs.push(() => {
         setTimeout(() => {
           try {
-            // 2.2.6.2
-            const r = onRejected(promise1.reason);
-            resolvePromise(promise2, r);
+            // 2.2.7.1
+            const x = onRejected(promise1.reason);
+            resolvePromise(promise2, x);
           } catch (err) {
+            // 2.2.7.2
             rejectedPromise(promise2, err);
           }
-        })
+        }, 0);
       });
     }
-
-    // 2.2.4
+    // 2.2.7
     return promise2;
   }
 }
 
-My_Promise.deferred = function () {
+// 添加 promise-test
+Promise.deferred = function () {
   const deferred = {};
-  deferred.promise = new My_Promise((resolve, reject) => {
+  deferred.promise = new Promise((resolve, reject) => {
     deferred.resolve = resolve;
     deferred.reject = reject;
   });
+
   return deferred;
 }
 
-module.exports = My_Promise;
+module.exports = Promise;
